@@ -1,38 +1,55 @@
-# Storage Engine Sandbox
+# storage-engine
 
-This repository is a dedicated workspace for testing and experimenting with various storage engines, databases, and data persistence technologies.
+This repository demonstrates how InnoDB, PostgreSQL, and Redis behave for the
+same `(user_id, score)` CRUD workload via runnable examples against real
+containers — it does not reimplement engine internals.
 
-## Current Modules
+## Landscape
 
-### 1. PostgreSQL Sample (`/postgres_sample`)
-A sandbox for testing relational database concepts, complex queries, and operations using PostgreSQL.
-- **Docker Setup:** Includes a `compose.yaml` to easily spin up a local PostgreSQL instance.
-- **SQL Scripts:** 
-  - `student_db.sql`: Schema and data for a basic student database.
-  - `enterprise_ops_db.sql`: Schema and data for a more complex enterprise operations database.
-- **Python Scripts:** 
-  - `db_queries.py`: Demonstrates basic CRUD operations and queries.
-  - `db_joins.py`: Demonstrates various types of SQL JOINs (INNER, LEFT, RIGHT, FULL OUTER, CROSS, SELF).
-- **Requirements:** `requirements.txt` containing the necessary Python database adapters (like `psycopg2`).
+| Engine | What stores a row / member | Point lookup | Range on `score` | Durability log | Versions / snapshots |
+|---|---|---|---|---|---|
+| **InnoDB** | Clustered B+ tree on `user_id` (row lives in the PK leaf) | Descend PK (sometimes adaptive hash) | Secondary B+ tree, then PK bookmark lookup | Redo (write-ahead) | Undo chain (`trx_id` / `roll_ptr`) |
+| **PostgreSQL** | Heap (slotted 8 KiB pages) + btree indexes | PK btree → heap TID | Score btree → heap fetch; HOT if non-indexed columns change | WAL (`pg_wal`) | Heap tuple `xmin`/`xmax`; VACUUM reclaims |
+| **Redis** zset | Dict (member→score) + skip list (score order) | `ZSCORE` via dict | `ZRANGEBYSCORE` via skip list | Optional AOF/RDB (not used in the demo) | Single-threaded command; no MVCC |
+| **RocksDB** (context only) | LSM: memtable + SST files | Bloom filter + SST index / data block | Iterator over ordered keys | WAL + memtable flush | Sequence-number snapshots |
+| **SQLite** (context only) | B-tree (rowid table, or clustered `WITHOUT ROWID`) | B-tree descent | B-tree range | Rollback journal or WAL mode | WAL readers see a snapshot; not InnoDB-style undo |
 
-## Setup Instructions
+RocksDB and SQLite are listed for orientation. This repo does not ship
+examples for them.
 
-To run the PostgreSQL sample:
-1. Navigate to the `postgres_sample` directory:
-   ```bash
-   cd postgres_sample
-   ```
-2. Start the database using Docker Compose:
-   ```bash
-   docker-compose up -d
-   ```
-3. Install the Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Run the Python scripts to interact with the database:
-   ```bash
-   python db_joins.py
-   ```
+## Docs
 
-*More storage engines (e.g., MongoDB, Redis, MySQL) will be added to this repository in the future.*
+- [docs/innodb.md](docs/innodb.md) — 16 KiB pages, clustered B+ tree, midpoint LRU, redo, undo/MVCC, AHI, change buffer
+- [docs/postgresql.md](docs/postgresql.md) — slotted heap, B-link btree, HOT, VACUUM, WAL
+- [docs/redis.md](docs/redis.md) — dict + skip list via `ZADD` / `ZSCORE` / `ZRANGEBYSCORE` / `ZREM`
+- [LEETCODE_MAPPING.md](LEETCODE_MAPPING.md) — mechanism ↔ problem ↔ how the demo touches it
+
+## How to run
+
+Images are pinned in `docker-compose.yml` (`mysql:8.0`, `postgres:16`, `redis:7`).
+Postgres is published on **5434** so it does not collide with a local 5432.
+On 2026-08-26 those tags resolved to MySQL 8.0.46, PostgreSQL 16.14, and
+Redis 7.4.11; `EXPLAIN` / `OBJECT ENCODING` output in `docs/` is from that run.
+
+```bash
+docker compose up -d
+pip install -r requirements.txt
+python examples/run_demos.py
+```
+
+The demo inserts **10,000** users (`score = (user_id * 37) % 100`), point-updates
+one row, range-scans `score BETWEEN 50 AND 60`, and deletes one user. Docs also
+show **page-layout arithmetic** for a 1,000,000-row table of the same schema;
+that arithmetic is labeled as a calculation from documented page sizes, not as
+a measured run.
+
+Host / port overrides: `MYSQL_HOST`, `POSTGRES_HOST`, `REDIS_HOST` (default
+`localhost`), plus `MYSQL_PORT` (3306), `POSTGRES_PORT` (5434), `REDIS_PORT`
+(6379). GitHub Actions maps Postgres at 5432; see `.github/workflows/ci.yml`.
+
+## Leftover sandbox
+
+[`postgres_sample/`](postgres_sample/) is an older student/joins sandbox with
+its own `compose.yaml` (Postgres on 5432). It is not the main demo. Prefer the
+root `docker-compose.yml` and `examples/` for the storage-engine walkthrough.
+Do not start both compose files if you need 5432/3306/6379 for something else.

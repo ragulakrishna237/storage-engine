@@ -1,0 +1,68 @@
+name: demos
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  demos:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: demo
+          MYSQL_DATABASE: storage_demo
+          MYSQL_USER: demo
+          MYSQL_PASSWORD: demo
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pdemo"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+          POSTGRES_DB: storage_demo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U demo -d storage_demo"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Run demos
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: "3306"
+          MYSQL_USER: demo
+          MYSQL_PASSWORD: demo
+          MYSQL_DATABASE: storage_demo
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+          POSTGRES_DB: storage_demo
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: "6379"
+        run: python examples/run_demos.py
